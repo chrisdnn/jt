@@ -2,7 +2,7 @@ from TwitterAPI import TwitterAPI
 from TwitterAPI import TwitterRestPager
 import json
 import pymongo
-import m_tweetsDAO
+import m_tweetsDAO_pre
 from datetime import datetime
 import argparse
 import time
@@ -12,7 +12,7 @@ connection_string = "mongodb://cdunneg01"
 connection = pymongo.MongoClient(connection_string)
 #dbs = connection.dbtweets ## For MTY uses
 dbs = connection.btctweets ## For MTY uses
-tweetsDAO = m_tweetsDAO.M_tweetsDAO(dbs)
+tweetsDAO = m_tweetsDAO_pre.M_tweetsDAO_pre(dbs)
 
 
 consumer_key = '6a8eiydF31fyJrJ3vJFtmpHV9'
@@ -49,7 +49,7 @@ def main(vargs):
         r = TwitterRestPager(api,'search/tweets', {'q':'btc/bitcoin', 'since':vargs['since'],'until':vargs['until']}) #,'since':'2017-08-15'})
         for item in r.get_iterator():
                 item['created_at_dt'] = datetime.strptime(item['created_at'], '%a %b %d %H:%M:%S +0000 %Y')
-                tweetsDAO.insert_tweet(item)
+                tweetsDAO.insert_tweet('tweets',item, 0,'')
         
 def parse_args():
         parser = argparse.ArgumentParser(description='Process some tweets')

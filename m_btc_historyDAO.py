@@ -116,12 +116,17 @@ class M_btc_historyDAO(object):
 
 ## writes collection
 ## json object{'results':[{'_id','value'}],'timeMillis':N, counts:{'input':N,'emit':N,'reduce':N,'output':N}, 'ok':N}
-        def map_reduce_to_collection(self, dbcollectionfrom, smap, sreduce, dbcollectionto, sreturn, squery, sscope): #, sout):
+#        def map_reduce_to_collection(self, dbcollectionfrom, smap, sreduce, dbcollectionto, sreturn, squery, sscope):
+        def map_reduce_to_collection(self, dbcollectionfrom, smap, sreduce, dbcollectionto, sreturn, squery, sscope, dbcolexists):
                 #l = []
                 '''
                 for each_item in self.db[dbcollection].inline_map_reduce(smap, sreduce, full_response=sreturn, query=squery, scope=sscope, out=sout):
                         l.append(each_item)
                         print('l...')
                 '''
-                l = self.db[dbcollectionfrom].map_reduce(smap, sreduce, dbcollectionto, full_response=sreturn, query=squery, scope=sscope)#, out=sout)
+                #                l = self.db[dbcollectionfrom].map_reduce(smap, sreduce, dbcollectionto, full_response=sreturn, query=squery, scope=sscope, out=sout)
+                if dbcolexists:
+                        l = self.db[dbcollectionfrom].map_reduce(smap, sreduce, out={'reduce':dbcollectionto}, full_response=sreturn, query=squery, scope=sscope)
+                else:
+                        l = self.db[dbcollectionfrom].map_reduce(smap, sreduce, out={'replace':dbcollectionto}, full_response=sreturn, query=squery, scope=sscope)
                 return l

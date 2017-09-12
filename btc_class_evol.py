@@ -23,22 +23,50 @@ default_until_dt = time.strftime('%Y-%m-%dT%H:%M:%S')
 tintervals = ['onemin', 'fivemin', 'thirtymin', 'hour', 'day']
 
 ## get history data for selected interval
+def get_since_dt(lastr, tperiod, dtsince, dtuntil):
+        lbtc_history = []
+        dtsince_param = dtsince
+        dbcollection_exists = False
+        if lastr == 'y':
+                dt_field = '_id'
+                print('YES.......')
+                lmax_date = []
+                lmax_date = btc_histo_DAO.find_btc_data_maxmin_value('btc_usd_class_'+tperiod,dt_field,'max')
+#                find_btc_data_maxmin_value('btc_usd_class_'+tperiod, '_id','max')
+                print('??? ', tperiod, '  lmax_date: ', lmax_date)
+                if len(lmax_date) > 0:
+                        dtsince_param = lmax_date[0][dt_field]
+                        dbcollection_exists = True
+                        print('////Update dtsince: ',dtsince_param)
+        json_data = {}
+        json_data['dbcol_exist'] = dbcollection_exists
+        json_data['dt_since'] = dtsince_param
+        #        return dtsince_param
+        return json_data
+
+## get history data for selected interval
 def get_history(lastr, tperiod, dtsince, dtuntil):
         lbtc_history = []
         dtsince_param = dtsince
         if lastr == 'y':
+                dt_field = '_id'
+                print('YES.......')
                 lmax_date = []
-                lmaxdate = btc_histo_DAO.find_btc_data_maxmin_value('btc_usd_h_class_'+tperiod, 'ISOdt','max')
+                lmax_date = btc_histo_DAO.find_btc_data_maxmin_value('btc_usd_class_'+tperiod,dt_field,'max')
+#                find_btc_data_maxmin_value('btc_usd_class_'+tperiod, '_id','max')
+#                print('??? ', tperiod, '  lmax_date: ', lmax_date)
                 if len(lmax_date) > 0:
-                        dtsince_param = lmax_date[0]['ISOdt']
+                        dtsince_param = lmax_date[0][dt_field]
+                        print('////Update dtsince: ',dtsince_param)
         lbtc_history = btc_histo_DAO.find_btc_data_by_daterange('btc_usd_history_'+tperiod,'ISOdt', dtsince_param, dtuntil)
-        print('collection: ', 'btc_usd_history_'+tperiod, 'dts: ', dtsince_param, ' dtu: ', dtuntil)
+        print('........collection: ', 'btc_usd_history_'+tperiod, 'dts: ', dtsince_param, ' dtu: ', dtuntil)
         return lbtc_history
 
-def map_reduce_exec(tperiod, dtsince, dtuntil):
+def map_reduce_exec_original(tperiod, dtsince, dtuntil, dbcol_exists):
         map = Code('function() {' \
                    '  difs = prev - this.C;' \
-                   '  emit(this.ISOdt, difs/prev);' \
+                   '  var perc_dif = 0; if (prev != 0) {perc_dif = difs/prev};' \
+                   '  emit(this.ISOdt, perc_dif );' \
                    '  prev = this.C;' \
                    '}')
         print(map)
@@ -48,41 +76,58 @@ def map_reduce_exec(tperiod, dtsince, dtuntil):
         print(reduce)
         sreturn_full = True
         sscope = {'difs':0, 'prev':0}
-        #squery = {'ISOdt':{'$gte':ISODate('2017-08-28T21:33:00'), '$lte':ISODate('2017-08-28T21:40:00')}}
-        #squery = {'ISOdt':{'$gte':datetime(2017,8,28,21,33,00), '$lte': datetime(2017,8,28,21,40,00)}}
         squery = {'ISOdt':{'$gte':dtsince, '$lte': dtuntil}}
         sout = {'inline':1}
-        result_null = btc_histo_DAO.map_reduce_to_collection('btc_usd_history_'+tperiod, map, reduce, 'btc_usd_class_'+tperiod, False, squery, sscope)
+        #sout_collection = {'reduce': 'btc_usd_class'+tperiod}
+        #        result_null = btc_histo_DAO.map_reduce_to_collection('btc_usd_history_'+tperiod, map, reduce, 'btc_usd_class_'+tperiod, False, squery, sscope, sout_collection)
+        result_null = btc_histo_DAO.map_reduce_to_collection('btc_usd_history_'+tperiod, map, reduce, 'btc_usd_class_'+tperiod, False, squery, sscope, dbcol_exists)
         result = btc_histo_DAO.map_reduce_inline('btc_usd_history_'+tperiod,map, reduce, sreturn_full, squery, sscope, sout)
         for doc in result['results']:
                 print doc
-
+                
+def map_reduce_exec(tperiod, dtsince, dtuntil, dbcol_exists):
+        map = Code('function() {' \
+                   '  difs = prev - this.C;' \
+                   '  var perc_dif = 0; var val_dif = 0; if (prev != 0) {perc_dif = difs/prev; val_dif = difs;};' \
+                   '  var value_m = { perc_d : perc_dif, val_d : val_dif};' \
+                   '  emit(this.ISOdt, value_m );' \
+                   '  prev = this.C;' \
+                   '}')
+        print(map)
+        reduce = Code('function(key, countObjVals) {' \
+                      '  reducedVal = { perc_d: 0, val_d: 0 };' \
+                      '  for (var idx = 0; idx < countObjVals.length; idx++) {' \
+                      '    reducedVal.perc_d += countObjVals[idx].perc_d; ' \
+                      '    reducedVal.val_d += countObjVals[idx].val_d; }' \
+                      '  return reducedVal;' \
+                      '}')
+        print(reduce)
+        sreturn_full = True
+        sscope = {'difs':0, 'prev':0}
+        squery = {'ISOdt':{'$gte':dtsince, '$lte': dtuntil}}
+        sout = {'inline':1}
+        #sout_collection = {'reduce': 'btc_usd_class'+tperiod}
+        #        result_null = btc_histo_DAO.map_reduce_to_collection('btc_usd_history_'+tperiod, map, reduce, 'btc_usd_class_'+tperiod, False, squery, sscope, sout_collection)
+        result_null = btc_histo_DAO.map_reduce_to_collection('btc_usd_history_'+tperiod, map, reduce, 'btc_usd_class_'+tperiod, False, squery, sscope, dbcol_exists)
+        result = btc_histo_DAO.map_reduce_inline('btc_usd_history_'+tperiod,map, reduce, sreturn_full, squery, sscope, sout)
+        for doc in result['results']:
+                print doc
+                
 ## classifiy btc/usd evolution for specific evolution history set
-def classify_evolution(tperiod, dtsince, dtuntil):
+def classify_evolution(tperiod, dtsince, dtuntil, dbcol_exist):
         max_date = datetime(2017,1,1,0,0,0)
         lmax_date = []
         if len(lmax_date) > 0:
                 max_date = lmax_date[0]['ISOdt']
-        '''
-        for elem in raw_data:
-                date_elem = datetime.strptime(elem['T'], '%Y-%m-%dT%H:%M:%S')
-                if date_elem >= max_date:
-                        elem['ISOdt'] = date_elem
-                        #btc_histo_DAO.insert_btc_data_no_duplicates('btc_usd_history',elem,0,'O')
-                        #print(elem)
-        '''
-        map_reduce_exec(tperiod, dtsince, dtuntil)
+        map_reduce_exec(tperiod, dtsince, dtuntil, dbcol_exist)
 
 # trigger each interval actions                        
 def trigger_interval(args):
         dtsince = datetime.strptime(args['since'], '%Y-%m-%dT%H:%M:%S')
-        dtuntil = datetime.strptime(args['until'], '%Y-%m-%dT%H:%M:%S')     
-        '''
-        datetime(time.strftime(vargs['since'],'%Y'),time.strftime(vargs['since'],'%m'),time.strftime(vargs['since'],'%d'),
-                           time.strftime(vargs['since'],'%H'),time.strftime(vargs['since'],'%M'),time.strftime(vargs['since'],'%S'))
-        datetime(time.strftime(vargs['until'],'%Y'),time.strftime(vargs['until'],'%m'),time.strftime(vargs['until'],'%d'),
-        time.strftime(vargs['until'],'%H'),time.strftime(vargs['until'],'%M'),time.strftime(vargs['until'],'%S')))
-        '''
+        dtuntil = datetime.strptime(args['until'], '%Y-%m-%dT%H:%M:%S')
+        dt_since_data = {}
+        dt_since_data['dbcol_exist'] = False
+        dt_since_data['dt_since'] = dtsince
         if args == 'all':
                 print('Request to updated all intervals...')#insert_new_item(args)
                 '''
@@ -94,9 +139,12 @@ def trigger_interval(args):
                 print('interval: ', args) #insert_new_items(args)
                 print('SINCE: ', dtsince, '   UNTIL: ', dtuntil)
                 l_interval_h = get_history(args['last'], args['interval'], dtsince, dtuntil)
-                for e in l_interval_h:
-                        print('R: ', e)
-        classify_evolution(args['interval'], dtsince, dtuntil)
+                #dtsince_updated = get_since_dt(args['last'], args['interval'], dtsince, dtuntil)
+                dtsince_data_json = get_since_dt(args['last'], args['interval'], dtsince, dtuntil)
+                dt_since_data['dbcol_exist'] = dtsince_data_json['dbcol_exist']
+                dt_since_data['dt_since'] = dtsince_data_json['dt_since']
+        #classify_evolution(args['interval'], dtsince_updated, dtuntil)
+        classify_evolution(args['interval'], dt_since_data['dt_since'], dtuntil, dt_since_data['dbcol_exist'])
                 
 def parse_args():
         parser = argparse.ArgumentParser(description='Classify BTC based on its variance')
