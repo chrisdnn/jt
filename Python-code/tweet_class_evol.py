@@ -49,13 +49,16 @@ def map_reduce_exec(tperiod, dtsince, dtuntil, dbcol_exists):
         #'  var factor_fivemin = 5; var factor_thirtymin = 30; ' \
         map = Code('function() {' \
                    '  var dt_y = parseInt(this.created_at_dt.getFullYear()); var dt_m = parseInt(this.created_at_dt.getMonth()); var dt_d = parseInt(this.created_at_dt.getDate()); ' \
-                   '  var dt_H = parseInt((this.created_at_dt).getHours()); var dt_M = parseInt((this.created_at_dt).getMinutes()); var dt_S = parseInt((this.created_at_dt).getSeconds()); ' \
+                   '  var dt_H = parseInt(this.created_at_dt.getHours()) + parseInt(this.created_at_dt.getTimezoneOffset()/60); var dt_M = parseInt((this.created_at_dt).getMinutes()); var dt_S = parseInt((this.created_at_dt).getSeconds()); ' \
                    '  var int_onemin = Math.floor(dt_M); var int_fivemin = Math.floor(dt_M/factor_fivemin)*factor_fivemin; var int_thirtymin = Math.floor(dt_M/factor_thirtymin)*factor_thirtymin;' \
                    '  var int_hour = dt_H; var int_day = dt_d;' \
-                   '  var value_m = {i_onemin: int_onemin, i_fivemin: int_fivemin, i_thirtymin: int_thirtymin, i_hour: int_hour, i_day: int_day}; ' \
+                   '  var v_onemin = {interval: int_onemin, class:""}; var v_fivemin = {interval: int_fivemin, class:""}; ' \
+                   '  var v_thirtymin = {interval: int_thirtymin, class:""}; var v_hour = {interval: int_hour, class:""}; var v_day = {interval: int_day, class:""};' \
+                   #'  var value_m = {i_onemin: int_onemin, i_fivemin: int_fivemin, i_thirtymin: int_thirtymin, i_hour: int_hour, i_day: int_day}; ' \
+                   '  var value_m = {text: this.text, v_onemin, v_fivemin, v_thirtymin, v_hour, v_day}; ' \
                    '  emit(this.created_at_dt, value_m );' \
                    '}')
-        reduce = Code('function(key, values){return 0;}')
+        reduce = Code('function(key, values){}')
         sreturn_full = True
         sscope = {'factor_fivemin':tintervals_dt_measure['fivemin'], 'factor_thirtymin':tintervals_dt_measure['thirtymin']}
         squery = {'created_at_dt':{'$gte':dtsince, '$lte': dtuntil}}
@@ -87,7 +90,7 @@ def classify_evolution(tperiod, dtsince, dtuntil, dbcol_exist):
         print('extracted tweets, dtsince: ', dtsince, ' - dtuntil: ',dtuntil)
         for elemp in ltweet_history:
                 json_data = {}
-                #json_data['tweet'] = elemp['text']
+                json_data['tweet'] = elemp['text']
                 json_data['created_at_dt'] = elemp['created_at_dt']
                 ## datetime parsed per element
                 var_day = int(re.sub(r'[^\d-]+', '', elemp['created_at_dt'].strftime('%d')))
@@ -107,7 +110,7 @@ def classify_evolution(tperiod, dtsince, dtuntil, dbcol_exist):
                 json_data['dt_hour'] = var_hr
                 json_data['dt_day'] = var_day
                 ## fields for classes
-                print(json_data)
+                #print(json_data)
         #data_DAO.insert_data_no_duplicates(dbcol_tweet_class, tdata, isprint, printfield):
         #classify_tweets_since(tperiod, [], dtsince, dtuntil, dbcol_exist)
         map_reduce_exec(tperiod, dtsince, dtuntil, dbcol_exist)
