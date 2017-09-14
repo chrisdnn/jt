@@ -64,15 +64,15 @@ def map_reduce_exec(tperiod, dtsince, dtuntil, dbcol_exists):
                      var int_onemin = Math.floor(dt_M); var int_fivemin = Math.floor(dt_M/factor_fivemin)*factor_fivemin; var int_thirtymin = Math.floor(dt_M/factor_thirtymin)*factor_thirtymin;
                      var int_hour = dt_H; var int_day = dt_d;
 
-                     var v_onemin = {interval: int_onemin, class_incr:"", class_inter:""}; 
-                     var v_fivemin = {interval: int_fivemin, class_incr:"", class_inter:""};
-                     var v_thirtymin = {interval: int_thirtymin, class_incr:"", class_inter:""}; 
-                     var v_hour = {interval: int_hour, class_incr:"", class_inter:""}; 
-                     var v_day = {interval: int_day, class_incr:"", class_inter:""};
-                     var v_user = { screen_name: u_screen_name, followers_count: u_followers_count, listed_count: u_listed_count};
-                     var v_tweet = { id: t_id, text: this.text ,favorite_count: t_favorite_count, retweet_id: ret_id, retweet_count: ret_count, retweet_favorite_count: ret_fav_count, retweet_text: ret_text}
+                     var onemin = {interval: int_onemin, class_incr:"", class_inter:""}; 
+                     var fivemin = {interval: int_fivemin, class_incr:"", class_inter:""};
+                     var thirtymin = {interval: int_thirtymin, class_incr:"", class_inter:""}; 
+                     var hour = {interval: int_hour, class_incr:"", class_inter:""}; 
+                     var day = {interval: int_day, class_incr:"", class_inter:""};
+                     var user = { screen_name: u_screen_name, followers_count: u_followers_count, listed_count: u_listed_count};
+                     var tweet = { id: t_id, text: this.text ,favorite_count: t_favorite_count, retweet_id: ret_id, retweet_count: ret_count, retweet_favorite_count: ret_fav_count, retweet_text: ret_text}
                      var value_m = {
-                                     v_tweet, v_user, v_onemin, v_fivemin, v_thirtymin, v_hour, v_day
+                                     tweet, user, onemin, fivemin, thirtymin, hour, day
                                    };
                      emit(this.created_at_dt, value_m );
                    }''')
