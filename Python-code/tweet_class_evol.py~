@@ -1,6 +1,6 @@
 import json
 import pymongo
-import m_btc_historyDAO
+import data_DAO
 from datetime import datetime
 import argparse
 import time
@@ -11,14 +11,17 @@ from bson.code import Code
 connection_string = "mongodb://cdunneg01"
 connection = pymongo.MongoClient(connection_string)
 dbs = connection.btctweets
-btc_histo_DAO = m_btc_historyDAO.M_btc_historyDAO(dbs)
+data_DAO = data_DAO.Data_DAO(dbs)
 
 # defaults
 default_since_dt = '2017-01-01T00:00:00'
 default_until_dt = time.strftime('%Y-%m-%dT%H:%M:%S')
+dbcol_tweet_class = 'tweet_class_history'
 
 #time intervals
 tintervals = ['onemin', 'fivemin', 'thirtymin', 'hour', 'day']
+tintervals_dt_measure = {'onemin':1, 'fivemin':5, 'thirtymin':30, 'hour':1, 'day':1}
+tintervals_dt_scope = {'onemin':5, 'fivemin':5, 'thirtymin':5, 'hour':4, 'day':3}
 
 ## get history data for selected interval
 def get_since_dt(lastr, tperiod, dtsince, dtuntil):
@@ -29,7 +32,7 @@ def get_since_dt(lastr, tperiod, dtsince, dtuntil):
                 dt_field = '_id'
                 print('YES.......')
                 lmax_date = []
-                lmax_date = btc_histo_DAO.find_btc_data_maxmin_value('btc_usd_class_'+tperiod,dt_field,'max')
+                lmax_date = data_DAO.find_data_maxmin_value('btc_usd_class_'+tperiod,dt_field,'max')
                 print('??? ', tperiod, '  lmax_date: ', lmax_date)
                 if len(lmax_date) > 0:
                         dtsince_param = lmax_date[0][dt_field]
@@ -40,44 +43,51 @@ def get_since_dt(lastr, tperiod, dtsince, dtuntil):
         json_data['dt_since'] = dtsince_param
         return json_data
 
-
-## Map reduces the operation of classifying each interval, based on the differences (absolute and percentage) among incremental records, as well as within the interval itself
-## Incremental: considers difference between Close position (fields with prefix "incr_")
-## Within record: consders difference between Open and Close positions (fields with prefix "int_")
-def map_reduce_exec(tperiod, dtsince, dtuntil, dbcol_exists):
-        map = Code('function() {' \
-                   '  incr_difs = incr_prev - this.C; var incr_perc_dif = 0; var incr_val_dif = 0; var incr_class_diff = "neutral"; ' \
-                   '  int_difs = this.O - this.C; var int_perc_dif = 0; var int_val_dif = 0; var int_class_diff = "neutral"; ' \
-                   '  if(incr_prev != 0) { incr_perc_dif = incr_difs/incr_prev; incr_val_dif = incr_difs; }; if(incr_difs < 0){ incr_class_diff = "loss"} else if(incr_difs > 0){ incr_class_diff = "gain"}; ' \
-                   '  if(this.O != 0) { int_perc_dif = int_difs/this.O; int_val_dif = int_difs; }; if(int_difs < 0){ int_class_diff = "loss"} else if(int_difs > 0){ int_class_diff = "gain"}; ' \
-                   '  var value_m = { incr_perc_d : incr_perc_dif, incr_val_d : incr_val_dif, incr_class_d: incr_class_diff, int_perc_d : int_perc_dif, int_val_d : int_val_dif, int_class_d: int_class_diff};' \
-                   '  emit(this.ISOdt, value_m );' \
-                   '  incr_prev = this.C;' \
-                   '}')
-        reduce = Code('function(key, countObjVals) {' \
-                      '  reducedVal = { perc_d: 0, val_d: 0 };' \
-                      '  for (var idx = 0; idx < countObjVals.length; idx++) {' \
-                      '    reducedVal.perc_d += countObjVals[idx].perc_d; ' \
-                      '    reducedVal.val_d += countObjVals[idx].val_d; }' \
-                      '  return reducedVal;' \
-                      '}')
-        sreturn_full = True
-        sscope = {'incr_difs':0, 'incr_prev':0}
-        squery = {'ISOdt':{'$gte':dtsince, '$lte': dtuntil}}
-        sout = {'inline':1}
-        #sout_collection = {'reduce': 'btc_usd_class'+tperiod}
-        result_null = btc_histo_DAO.map_reduce_to_collection('btc_usd_history_'+tperiod, map, reduce, 'btc_usd_class_'+tperiod, False, squery, sscope, dbcol_exists)
-        ## uncommment the following line for inline map_reduce
-        #result = btc_histo_DAO.map_reduce_inline('btc_usd_history_'+tperiod,map, reduce, sreturn_full, squery, sscope, sout)
-
+def classify_tweets_since(tperiod, lbtc_class, dtsince, dtuntil, dbcol_exist): #
+        #ltweet_data = data_DAO.find_data_by_daterange('tweets','created_at_dt',dtsince,dtuntil)
+        if tintervals_dt_scope[tperiod] == 5:
+                print('5 interval : ', tperiod, ' date_scope: ', tintervals_dt_scope[tperiod])
+                
+        elif tintervals_dt_scope[tperiod] == 4:
+                print('4 interval : ', tperiod, ' date_scope: ', tintervals_dt_scope[tperiod])
+        elif tintervals_dt_scope[tperiod] == 3:
+                print('3 interval : ', tperiod, ' date_scope: ', tintervals_dt_scope[tperiod])
+        
+## classifiy btc/usd evolution for specific evolution history set
+def get_btc_class_since(tperiod, dtsince, dtuntil, dbcol_exist):
+        lbtc_class = data_DAO.find_data_by_daterange('btc_usd_class_'+tperiod,'_id',dtsince,dtuntil)
+        return lbtc_class
                 
 ## classifiy btc/usd evolution for specific evolution history set
 def classify_evolution(tperiod, dtsince, dtuntil, dbcol_exist):
-        max_date = datetime(2017,1,1,0,0,0)
-        lmax_date = []
-        if len(lmax_date) > 0:
-                max_date = lmax_date[0]['ISOdt']
-        map_reduce_exec(tperiod, dtsince, dtuntil, dbcol_exist)
+        #map_reduce_exec(tperiod, dtsince, dtuntil, dbcol_exist)
+        ltweet_history = data_DAO.find_data_by_daterange('tweets','created_at_dt',dtsince,dtuntil)
+        ltweet_extended = []
+        for elem in ltweet_extended:
+                json_data = {}
+                json_data['tweet'] = elemp['text']
+                json_data['created_at_dt'] = elemp['created_at_dt']
+                ## datetime parsed per element
+                var_day = int(re.sub(r'[^\d-]+', '', elemp['created_at_dt'].strftime('%d')))
+                var_hr = int(re.sub(r'[^\d-]+', '', elemp['created_at_dt'].strftime('%H')))
+                var_min = int(re.sub(r'[^\d-]+', '', elemp['created_at_dt'].strftime('%M')))
+                var_sec = int(re.sub(r'[^\d-]+', '', elemp['created_at_dt'].strftime('%S')))
+                json_data['dt_yyyy'] = elemp['created_at_dt'].strftime('%Y')
+                json_data['dt_mm'] = elemp['created_at_dt'].strftime('%m')
+                json_data['dt_dd'] = elemp['created_at_dt'].strftime('%d')
+                json_data['dt_Hhr'] = elemp['created_at_dt'].strftime('%H')
+                json_data['dt_Min'] = elemp['created_at_dt'].strftime('%M')
+                json_data['dt_Sec'] = elemp['created_at_dt'].strftime('%S')
+                ## fields for quantification per interval
+                json_data['dt_onemin'] = var_min
+                json_data['dt_fivemin'] = var_min/tintervals_dt_measure['fivemin']
+                json_data['dt_thirtymin'] = var_min/tintervals_dt_measure['thirtymin']
+                json_data['dt_hour'] = var_hr
+                json_data['dt_day'] = var_day
+                ## fields for classes
+                print(json_data)
+        #data_DAO.insert_data_no_duplicates(dbcol_tweet_class, tdata, isprint, printfield):
+        #classify_tweets_since(tperiod, [], dtsince, dtuntil, dbcol_exist)
 
 # trigger each interval actions                        
 def trigger_interval(args):
