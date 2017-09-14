@@ -30,10 +30,11 @@ def get_since_dt(lastr, tperiod, dtsince, dtuntil):
         dtsince_param = dtsince
         dbcollection_exists = False
         if lastr == 'y':
+                #dt_field = '_id'
                 dt_field = '_id'
-                print('YES.......')
                 lmax_date = []
-                lmax_date = data_DAO.find_data_maxmin_value('btc_usd_class_'+tperiod,dt_field,'max')
+                #lmax_date = data_DAO.find_data_maxmin_value('btc_usd_class_'+tperiod,dt_field,'max')
+                lmax_date = data_DAO.find_data_maxmin_value(dbcol_tweet_class,dt_field,'max')
                 print('??? ', tperiod, '  lmax_date: ', lmax_date)
                 if len(lmax_date) > 0:
                         dtsince_param = lmax_date[0][dt_field]
@@ -46,18 +47,35 @@ def get_since_dt(lastr, tperiod, dtsince, dtuntil):
 
 ## Map reduces the operation of calculating the bucket where the tweets land, regarding intervals
 def map_reduce_exec(tperiod, dtsince, dtuntil, dbcol_exists):
-        #'  var factor_fivemin = 5; var factor_thirtymin = 30; ' \
-        map = Code('function() {' \
-                   '  var dt_y = parseInt(this.created_at_dt.getFullYear()); var dt_m = parseInt(this.created_at_dt.getMonth()); var dt_d = parseInt(this.created_at_dt.getDate()); ' \
-                   '  var dt_H = parseInt(this.created_at_dt.getHours()) + parseInt(this.created_at_dt.getTimezoneOffset()/60); var dt_M = parseInt((this.created_at_dt).getMinutes()); var dt_S = parseInt((this.created_at_dt).getSeconds()); ' \
-                   '  var int_onemin = Math.floor(dt_M); var int_fivemin = Math.floor(dt_M/factor_fivemin)*factor_fivemin; var int_thirtymin = Math.floor(dt_M/factor_thirtymin)*factor_thirtymin;' \
-                   '  var int_hour = dt_H; var int_day = dt_d;' \
-                   '  var v_onemin = {interval: int_onemin, class:""}; var v_fivemin = {interval: int_fivemin, class:""}; ' \
-                   '  var v_thirtymin = {interval: int_thirtymin, class:""}; var v_hour = {interval: int_hour, class:""}; var v_day = {interval: int_day, class:""};' \
-                   #'  var value_m = {i_onemin: int_onemin, i_fivemin: int_fivemin, i_thirtymin: int_thirtymin, i_hour: int_hour, i_day: int_day}; ' \
-                   '  var value_m = {text: this.text, v_onemin, v_fivemin, v_thirtymin, v_hour, v_day}; ' \
-                   '  emit(this.created_at_dt, value_m );' \
-                   '}')
+        map = Code('''function() {
+                     var u_screen_name = this.user.screen_name; var u_followers_count = this.user.followers_count; var u_listed_count = this.user.listed_count; 
+                     var t_id = this.id; var t_text = this.text; var t_favorite_count = this.favorite_count;
+
+                     var ret_id = ""; var ret_count = 0; var ret_fav_count = 0; var ret_text = "";
+                     if(this.hasOwnProperty("retweeted_status")){ 
+                        ret_id = this.retweeted_status.id; 
+                        ret_count = this.retweeted_status.retweet_count ; 
+                        var ret_fav_count = this.retweeted_status.favorite_count; 
+                        var ret_text = this.retweeted_status.text 
+                     };
+
+                     var dt_y = parseInt(this.created_at_dt.getFullYear()); var dt_m = parseInt(this.created_at_dt.getMonth()); var dt_d = parseInt(this.created_at_dt.getDate()); 
+                     var dt_H = parseInt(this.created_at_dt.getHours()) + parseInt(this.created_at_dt.getTimezoneOffset()/60); var dt_M = parseInt((this.created_at_dt).getMinutes()); var dt_S = parseInt((this.created_at_dt).getSeconds());
+                     var int_onemin = Math.floor(dt_M); var int_fivemin = Math.floor(dt_M/factor_fivemin)*factor_fivemin; var int_thirtymin = Math.floor(dt_M/factor_thirtymin)*factor_thirtymin;
+                     var int_hour = dt_H; var int_day = dt_d;
+
+                     var v_onemin = {interval: int_onemin, class:""}; 
+                     var v_fivemin = {interval: int_fivemin, class:""};
+                     var v_thirtymin = {interval: int_thirtymin, class:""}; 
+                     var v_hour = {interval: int_hour, class:""}; 
+                     var v_day = {interval: int_day, class:""};
+                     var v_user = { screen_name: u_screen_name, followers_count: u_followers_count, listed_count: u_listed_count};
+                     var v_tweet = { id: t_id, text: this.text ,favorite_count: t_favorite_count, retweet_id: ret_id, retweet_count: ret_count, retweet_favorite_count: ret_fav_count, retweet_text: ret_text}
+                     var value_m = {
+                                     v_tweet, v_user, v_onemin, v_fivemin, v_thirtymin, v_hour, v_day
+                                   };
+                     emit(this.created_at_dt, value_m );
+                   }''')
         reduce = Code('function(key, values){}')
         sreturn_full = True
         sscope = {'factor_fivemin':tintervals_dt_measure['fivemin'], 'factor_thirtymin':tintervals_dt_measure['thirtymin']}
@@ -71,7 +89,6 @@ def classify_tweets_since(tperiod, lbtc_class, dtsince, dtuntil, dbcol_exist): #
         #ltweet_data = data_DAO.find_data_by_daterange('tweets','created_at_dt',dtsince,dtuntil)
         if tintervals_dt_scope[tperiod] == 5:
                 print('5 interval : ', tperiod, ' date_scope: ', tintervals_dt_scope[tperiod])
-                
         elif tintervals_dt_scope[tperiod] == 4:
                 print('4 interval : ', tperiod, ' date_scope: ', tintervals_dt_scope[tperiod])
         elif tintervals_dt_scope[tperiod] == 3:
@@ -133,6 +150,7 @@ def trigger_interval(args):
         else:
                 print('SINCE: ', dtsince, '   UNTIL: ', dtuntil)
                 dtsince_data_json = get_since_dt(args['last'], args['interval'], dtsince, dtuntil)
+                print('DT since: ', dtsince_data_json['dt_since'])
                 dt_since_data['dbcol_exist'] = dtsince_data_json['dbcol_exist']
                 dt_since_data['dt_since'] = dtsince_data_json['dt_since']
                 classify_evolution(args['interval'], dt_since_data['dt_since'], dtuntil, dt_since_data['dbcol_exist'])
