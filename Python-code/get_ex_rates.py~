@@ -1,0 +1,105 @@
+from TwitterAPI import TwitterAPI
+from TwitterAPI import TwitterRestPager
+import json
+import pymongo
+import data_DAO
+from datetime import datetime
+import argparse
+import time
+import requests
+
+
+#first, setup mongodb connection
+connection_string = "mongodb://cdunneg01"
+connection = pymongo.MongoClient(connection_string)
+dbs = connection.btctweets
+btc_histo_DAO = data_DAO.Data_DAO(dbs)
+
+#defaults
+dbcol_dst_name = 'bittrex_btcusd_history_test'
+#dbcol_dst_name = '_history_'
+
+#time intervals
+tintervals = ['onemin', 'fivemin', 'thirtymin', 'hour', 'day']
+tintervals_sleep_factor = {'onemin':1, 'fivemin':5, 'thirtymin':30, 'hour':60, 'day':1440}
+
+def insert_new_items(tperiod):
+#        r = requests.get('https://bittrex.com/Api/v2.0/pub/market/GetTicks?marketName=USDT-BTC&tickInterval=oneMin')
+        r = requests.get('https://bittrex.com/Api/v2.0/pub/market/GetTicks?marketName=USDT-BTC&tickInterval=' + tperiod)
+        if r.json()['success'] == True:
+                raw_data = r.json()['result']
+                lmax_dat = []
+                lmax_date_query = {'interval':tperiod }
+                lmax_date = btc_histo_DAO.find_data_maxmin_value(dbcol_dst_name, lmax_date_query, 'obj.ISOdt','max')
+                max_date = datetime(2017,1,1,0,0,0) ## para asignar un valor minimo a la fecha
+                if len(lmax_date) > 0:
+                        max_date = lmax_date[0]['obj']['ISOdt']
+                for elem in raw_data:
+                        date_elem = datetime.strptime(elem['T'], '%Y-%m-%dT%H:%M:%S')
+                        #print('date_elem: ', date_elem, ' max_date: ', max_date)
+                        if date_elem >= max_date:
+                                elem['ISOdt'] = date_elem
+                                elem_insert = {'interval':tperiod,
+                                               'obj': elem }
+                                #btc_histo_DAO.insert_btc_data_no_duplicates('btc_usd_history_' + tperiod,elem,0,'O')
+                                tquery = {'interval':tperiod, 'obj.ISOdt':elem['ISOdt']}
+                                btc_histo_DAO.insert_data_no_duplicates(dbcol_dst_name, tquery, elem_insert, 0, 'O')
+                                #print(elem)
+
+## trigger all or just one interval
+def trigger_interval(tinterval, gettype):
+        ## determine if streaming or snapshot
+        t_unit_sleep = 60
+        t_break = False
+        t_counter = 0
+        if gettype == 'snapshot':
+                t_unit_sleep = 0
+                t_break = True
+        print('Request to update interval(s): ' + tinterval + ' as: ' + gettype)
+        while True:
+                if tinterval == 'all':
+                        #print('Request to update all intervals...')
+                        for tinter in tintervals: ##traverse all intervals (enum)
+                                if tinter == 'onemin':
+                                        #print('Interval: ', tinter)
+                                        insert_new_items(tinter)
+                                        print('Finished interval: ' + tinter + ' at: ' + str(datetime.now()))
+                                        time.sleep(t_unit_sleep)
+                                        t_counter = t_counter + 1
+                                if (tinter != 'onemin') and (t_counter % tintervals_sleep_factor[tinter] == 0): ## if is a multiple of this interval
+                                        #print('Interval: ', tinter)
+                                        insert_new_items(tinter)
+                                        print('Finished interval: ' + tinter + ' at: ' + str(datetime.now()))
+                else:
+                        insert_new_items(tinterval)
+                        print('Finished interval: ' + tinterval)
+                        time.sleep(tintervals_sleep_factor[tinterval]*t_unit_sleep)
+                if t_break:
+                        break
+        '''
+        if tinterval == 'all':
+                print('Request to update all intervals...')
+                for tinter in tintervals:
+                        insert_new_items(tinter)
+                        print('Finished interval: ' + tinter)
+        else:
+                insert_new_items(args)
+        '''
+                
+def parse_args():
+        parser = argparse.ArgumentParser(description='Get BTC/USD price history, as 1 & 5 min time periods')
+        parser.add_argument('-i','--interval', choices=list(set(['all']).union(set(tintervals))), required=True)
+        parser.add_argument('-g','--get', choices=['snapshot','streaming'], default='snapshot', required=True) 
+        #parser.add_argument('-u','--until', nargs='?', default=time.strftime('%Y-%m-%dT%H:%M:%S'), metavar='YYYY-MM-DD') 
+        args = parser.parse_args()
+        v_args = vars(args)
+        return v_args
+
+def main(vargs):
+        trigger_interval(vargs['interval'], vargs['get'])
+
+                                
+if __name__ == "__main__":
+        v_args = parse_args()
+        main(v_args)
+

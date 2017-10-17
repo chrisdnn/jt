@@ -1,24 +1,31 @@
 import json
 import pymongo
-import m_btc_historyDAO
+import data_DAO
 from datetime import datetime
 import argparse
 import time
 import requests
 from bson.code import Code
+import re
+import pprint
 
 #first, setup mongodb connection
 connection_string = "mongodb://cdunneg01"
 connection = pymongo.MongoClient(connection_string)
 dbs = connection.btctweets
-btc_histo_DAO = m_btc_historyDAO.M_btc_historyDAO(dbs)
+data_DAO = data_DAO.Data_DAO(dbs)
 
 # defaults
 default_since_dt = '2017-01-01T00:00:00'
 default_until_dt = time.strftime('%Y-%m-%dT%H:%M:%S')
+dbcol_tweet_class_from = 'tweets_raw'
+dbcol_tweet_class_dst = 'tweet_class'
+dbcol_exchange_class_from = 'bittrex_btcusd_class_test'
 
 #time intervals
-tintervals = ['onemin', 'fivemin', 'thirtymin', 'hour', 'day']
+tintervals = ['onemin', 'fivemin', 'fifteenmin', 'thirtymin', 'hour', 'day']
+tintervals_dt_measure = {'onemin':1, 'fivemin':5, 'fifteenmin':15, 'thirtymin':30, 'hour':1, 'day':1}
+tintervals_dt_scope = {'onemin':5, 'fivemin':5, 'fifteenmin':5, 'thirtymin':5, 'hour':4, 'day':3}
 
 ## get history data for selected interval
 def get_since_dt(lastr, tperiod, dtsince, dtuntil):
@@ -26,10 +33,11 @@ def get_since_dt(lastr, tperiod, dtsince, dtuntil):
         dtsince_param = dtsince
         dbcollection_exists = False
         if lastr == 'y':
-                dt_field = '_id'
-                print('YES.......')
+                #dt_field = '_id'
+                dt_field = 'tweet_class._id.created_at'
                 lmax_date = []
-                lmax_date = btc_histo_DAO.find_btc_data_maxmin_value('btc_usd_class_'+tperiod,dt_field,'max')
+                squery = {}
+                lmax_date = data_DAO.find_data_maxmin_value(dbcol_tweet_class_dst, squery, dt_field, 'max')
                 print('??? ', tperiod, '  lmax_date: ', lmax_date)
                 if len(lmax_date) > 0:
                         dtsince_param = lmax_date[0][dt_field]
@@ -40,45 +48,63 @@ def get_since_dt(lastr, tperiod, dtsince, dtuntil):
         json_data['dt_since'] = dtsince_param
         return json_data
 
+## Map reduces the operation of calculating the bucket where the tweets land, regarding intervals
+def lookup_exec(tperiod, dtsince, dtuntil):
+        smatch = {'$match': {'$and': [ {'dt_parsed.'+tperiod:{ '$gte': dtsince, '$lte': dtuntil}} ] }  }
+        #print('match', smatch)
+        pipeline = [
+                smatch,
+                {'$project':
+                 {
+                         'dt_parsed':1,
+                         'user.screen_name':1,
+                         'user.followers_count':1,
+                         'user.listed_count':1,
+                         'text':1,
+                         'favorite_count':1,
+                         'id':1
+                 }
+                },
+                {'$lookup':
+                 {
+                         'from': dbcol_exchange_class_from,
+                         'localField': 'dt_parsed.'+tperiod,
+                         'foreignField': '_id.created_at',
+                         'as':'tweet_class'
+                 }
+                },
+                {'$project':
+                 {
+                        'dt_parsed':1,
+                        'user.screen_name':1,
+                        'user.followers_count':1,
+                        'user.listed_count':1,
+                        'text':1,
+                        'favorite_count':1,
+                        'id':1,
+                         'tweet_class': {
+                                 '$filter': {
+                                         'input': '$tweet_class',
+                                         'as': 'tweet_c',
+                                         'cond': { '$eq': ['$$tweet_c._id.interval',tperiod] }
+                                 }
+                         }
+                 }
+                }
 
-## Map reduces the operation of classifying each interval, based on the differences (absolute and percentage) among incremental records, as well as within the interval itself
-## Incremental: considers difference between Close position (fields with prefix "incr_")
-## Within record: consders difference between Open and Close positions (fields with prefix "int_")
-def map_reduce_exec(tperiod, dtsince, dtuntil, dbcol_exists):
-        map = Code('function() {' \
-                   '  incr_difs = incr_prev - this.C; var incr_perc_dif = 0; var incr_val_dif = 0; var incr_class_diff = "neutral"; ' \
-                   '  int_difs = this.O - this.C; var int_perc_dif = 0; var int_val_dif = 0; var int_class_diff = "neutral"; ' \
-                   '  if(incr_prev != 0) { incr_perc_dif = incr_difs/incr_prev; incr_val_dif = incr_difs; }; if(incr_difs < 0){ incr_class_diff = "loss"} else if(incr_difs > 0){ incr_class_diff = "gain"}; ' \
-                   '  if(this.O != 0) { int_perc_dif = int_difs/this.O; int_val_dif = int_difs; }; if(int_difs < 0){ int_class_diff = "loss"} else if(int_difs > 0){ int_class_diff = "gain"}; ' \
-                   '  var value_m = { incr_perc_d : incr_perc_dif, incr_val_d : incr_val_dif, incr_class_d: incr_class_diff, int_perc_d : int_perc_dif, int_val_d : int_val_dif, int_class_d: int_class_diff};' \
-                   '  emit(this.ISOdt, value_m );' \
-                   '  incr_prev = this.C;' \
-                   '}')
-        reduce = Code('function(key, countObjVals) {' \
-                      '  reducedVal = { perc_d: 0, val_d: 0 };' \
-                      '  for (var idx = 0; idx < countObjVals.length; idx++) {' \
-                      '    reducedVal.perc_d += countObjVals[idx].perc_d; ' \
-                      '    reducedVal.val_d += countObjVals[idx].val_d; }' \
-                      '  return reducedVal;' \
-                      '}')
-        sreturn_full = True
-        sscope = {'incr_difs':0, 'incr_prev':0}
-        squery = {'ISOdt':{'$gte':dtsince, '$lte': dtuntil}}
-        sout = {'inline':1}
-        #sout_collection = {'reduce': 'btc_usd_class'+tperiod}
-        result_null = btc_histo_DAO.map_reduce_to_collection('btc_usd_history_'+tperiod, map, reduce, 'btc_usd_class_'+tperiod, False, squery, sscope, dbcol_exists)
-        ## uncommment the following line for inline map_reduce
-        #result = btc_histo_DAO.map_reduce_inline('btc_usd_history_'+tperiod,map, reduce, sreturn_full, squery, sscope, sout)
+        ]
+        #print(pipeline)
+        #print('db.from:',dbcol_tweet_class_from)
+        lookup_agg = data_DAO.aggregate_pipeline(dbcol_tweet_class_from, pipeline)
+        pprint.pprint(list(lookup_agg))
+
 
                 
 ## classifiy btc/usd evolution for specific evolution history set
 def classify_evolution(tperiod, dtsince, dtuntil, dbcol_exist):
-        max_date = datetime(2017,1,1,0,0,0)
-        lmax_date = []
-        if len(lmax_date) > 0:
-                max_date = lmax_date[0]['ISOdt']
-        map_reduce_exec(tperiod, dtsince, dtuntil, dbcol_exist)
-
+        print('extracted tweets, dtsince: ', dtsince, ' - dtuntil: ',dtuntil)
+        lookup_exec(tperiod, dtsince, dtuntil)
+        
 # trigger each interval actions                        
 def trigger_interval(args):
         dtsince = datetime.strptime(args['since'], '%Y-%m-%dT%H:%M:%S')
@@ -87,7 +113,7 @@ def trigger_interval(args):
         dt_since_data['dbcol_exist'] = False
         dt_since_data['dt_since'] = dtsince
         if args['interval'] == 'all':
-                print('Request to updated all intervals...')#insert_new_item(args)
+                print('Request to updated all intervals...')
                 for tinter in tintervals:
                         dtsince_data_json = get_since_dt(args['last'], tinter, dtsince, dtuntil)
                         dt_since_data['dbcol_exist'] = dtsince_data_json['dbcol_exist']
@@ -97,6 +123,7 @@ def trigger_interval(args):
         else:
                 print('SINCE: ', dtsince, '   UNTIL: ', dtuntil)
                 dtsince_data_json = get_since_dt(args['last'], args['interval'], dtsince, dtuntil)
+                print('DT since: ', dtsince_data_json['dt_since'])
                 dt_since_data['dbcol_exist'] = dtsince_data_json['dbcol_exist']
                 dt_since_data['dt_since'] = dtsince_data_json['dt_since']
                 classify_evolution(args['interval'], dt_since_data['dt_since'], dtuntil, dt_since_data['dbcol_exist'])
